@@ -304,6 +304,17 @@ pre.code .f { color: #7dd3fc; }
 .chip { font-size: 13px; padding: 4px 10px; border-radius: 7px; background: var(--accent-soft); color: var(--text); font-weight: 500; }
 @media (max-width: 560px) { .stack { grid-template-columns: 1fr; } .stack .l { border-top: 1px solid var(--border); } .stack > div:nth-child(2) { border-top: 0; } }
 
+/* Screenshots */
+.shot { margin: 0; }
+.shot a { display: block; border-radius: 12px; overflow: hidden; border: 1px solid var(--border); box-shadow: var(--shadow); background: #111; }
+.shot img { display: block; width: 100%; height: auto; transition: transform .3s ease; }
+.shot a:hover img { transform: scale(1.01); }
+.shot figcaption { margin-top: 12px; font-size: 14.5px; color: var(--muted); }
+.shot figcaption b { color: var(--text); }
+.shots-main { margin-bottom: 28px; }
+.shots-tall { max-height: 640px; overflow: hidden; position: relative; }
+.shots-tall::after { content: ""; position: absolute; inset: auto 0 0 0; height: 90px; background: linear-gradient(transparent, #111); pointer-events: none; }
+
 /* Footer */
 .closing { text-align: center; padding: 96px 0; }
 .closing h2 { max-width: 22ch; margin: 8px auto 16px; }
@@ -319,6 +330,7 @@ footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; g
   <div class="wrap">
     <a class="brand" href="#">🔎 Research Agent</a>
     <div class="links">
+      <a class="opt" href="#screenshots">Screenshots</a>
       <a class="opt" href="#architecture">Architecture</a>
       <a class="opt" href="#engineering">Engineering</a>
       <a class="opt" href="#reliability">SLOs</a>
@@ -384,7 +396,42 @@ footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; g
   </div>
 </section>
 
-<section id="architecture">
+<section id="screenshots">
+  <div class="wrap">
+    <div class="kicker">See it running</div>
+    <h2>Real runs, real numbers.</h2>
+    <p class="section-lead">Every screenshot comes from the app running locally against real research runs: OpenAI for the agent, with Tavily, arXiv and Wikipedia as its tools. Click any image for full size.</p>
+
+    <figure class="shot shots-main">
+      <a href="screenshots/dashboard.png"><img src="screenshots/dashboard.png" alt="Analytics dashboard: 7 jobs, 100% success, $0.29 LLM cost, throughput and p95 latency charts, worker status" loading="lazy" width="1600" height="889"></a>
+      <figcaption><b>Analytics.</b> Jobs, success rate and LLM cost (with tokens), throughput and p95 latency against the 60-second SLO line, active jobs and worker health, scoped to 24 hours, 7 days or 30 days.</figcaption>
+    </figure>
+
+    <div class="grid g2" style="gap:28px">
+      <figure class="shot">
+        <a class="shots-tall" href="screenshots/task-detail.png"><img src="screenshots/task-detail.png" alt="A finished research task with a cited summary, cost tiles, an activity feed and the tool calls" loading="lazy" width="1600" height="1994"></a>
+        <figcaption><b>A finished task.</b> A cited answer, plus exactly what it cost: 3 LLM iterations, 6 searches, 16.8k tokens, $0.03, 22 seconds. Every search appears in the activity feed.</figcaption>
+      </figure>
+      <div style="display:grid; gap:28px; align-content:start">
+        <figure class="shot">
+          <a href="screenshots/slo.png"><img src="screenshots/slo.png" alt="SLO page with error budgets and per-tool latency percentiles" loading="lazy" width="1600" height="611"></a>
+          <figcaption><b>SLOs.</b> Each objective with its remaining error budget, and p50/p95/p99 latency for each tool.</figcaption>
+        </figure>
+        <figure class="shot">
+          <a href="screenshots/research-list.png"><img src="screenshots/research-list.png" alt="Research list showing completed questions and who asked them" loading="lazy" width="1600" height="704"></a>
+          <figcaption><b>Research history.</b> Every task, who started it, and its status.</figcaption>
+        </figure>
+      </div>
+    </div>
+
+    <figure class="shot" style="margin-top:28px">
+      <a href="screenshots/grafana.png"><img src="screenshots/grafana.png" alt="Grafana production dashboard: job throughput, active jobs, job duration and tool latency p95, tool success rate, tool calls" loading="lazy" width="1600" height="985"></a>
+      <figcaption><b>Grafana.</b> The provisioned production dashboard, with Prometheus scraping the API every 15 seconds.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="alt" id="architecture">
   <div class="wrap">
     <div class="kicker">Architecture</div>
     <h2>Six services, one source of truth.</h2>
@@ -493,7 +540,7 @@ footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; g
   </div>
 </section>
 
-<section class="alt" id="lifecycle">
+<section id="lifecycle">
   <div class="wrap">
     <div class="kicker">Life of a request</div>
     <h2>From question to answer, one job at a time.</h2>
@@ -542,7 +589,7 @@ footer .wrap { display: flex; justify-content: space-between; flex-wrap: wrap; g
   </div>
 </section>
 
-<section id="engineering">
+<section class="alt" id="engineering">
   <div class="wrap">
     <div class="kicker">Engineering decisions</div>
     <h2>The interesting parts.</h2>
@@ -646,7 +693,7 @@ data: {<span class="s">"job_id"</span>: 42, <span class="s">"event_type"</span>:
   </div>
 </section>
 
-<section class="alt" id="reliability">
+<section id="reliability">
   <div class="wrap">
     <div class="kicker">Reliability</div>
     <h2>"Is it working?" has a precise answer.</h2>
@@ -677,7 +724,7 @@ data: {<span class="s">"job_id"</span>: 42, <span class="s">"event_type"</span>:
   </div>
 </section>
 
-<section id="security">
+<section class="alt" id="security">
   <div class="wrap">
     <div class="kicker">Security</div>
     <h2>Real accounts, real sessions, real roles.</h2>
@@ -705,7 +752,7 @@ data: {<span class="s">"job_id"</span>: 42, <span class="s">"event_type"</span>:
   </div>
 </section>
 
-<section class="alt" id="testing">
+<section id="testing">
   <div class="wrap">
     <div class="kicker">Testing</div>
     <h2>595 tests, against the real database.</h2>
@@ -718,7 +765,7 @@ data: {<span class="s">"job_id"</span>: 42, <span class="s">"event_type"</span>:
   </div>
 </section>
 
-<section id="stack">
+<section class="alt" id="stack">
   <div class="wrap">
     <div class="kicker">Tech stack</div>
     <h2>Built with</h2>
@@ -734,7 +781,7 @@ data: {<span class="s">"job_id"</span>: 42, <span class="s">"event_type"</span>:
   </div>
 </section>
 
-<section class="closing alt">
+<section class="closing">
   <div class="wrap">
     <div class="kicker">Explore</div>
     <h2>Everything here is in the repo, with tests.</h2>

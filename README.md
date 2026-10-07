@@ -43,6 +43,31 @@ This project is my answer to *"what does it take to run an LLM agent in producti
 
 ---
 
+## Screenshots
+
+All of these come from the app running locally with real research runs (OpenAI, Tavily, arXiv).
+
+**Analytics dashboard**: jobs, success rate, LLM cost and tokens, throughput and p95 latency against the 60 s SLO, active jobs and worker health.
+
+![Analytics dashboard](docs/screenshots/dashboard.png)
+
+**A finished research task**: the cited summary, what the run cost (iterations, tool calls, tokens, dollars), the live activity feed, and every search the agent ran.
+
+![Research task detail](docs/screenshots/task-detail.png)
+
+<table>
+<tr>
+<td width="50%"><b>SLOs and error budgets</b><br><img src="docs/screenshots/slo.png" alt="SLO page"></td>
+<td width="50%"><b>Research history</b>, with who started each task<br><img src="docs/screenshots/research-list.png" alt="Research list"></td>
+</tr>
+</table>
+
+**Grafana**: the provisioned production dashboard, fed by Prometheus.
+
+![Grafana dashboard](docs/screenshots/grafana.png)
+
+---
+
 ## Architecture
 
 ```mermaid
