@@ -1,0 +1,17 @@
+# Loaded by Grafana on startup (mounted at /etc/grafana/provisioning).
+# The fixed uid lets dashboards refer to this data source by name.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    # The prometheus service in docker-compose.yml.
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      # Matches scrape_interval in monitoring/prometheus.yml.
+      timeInterval: 15s

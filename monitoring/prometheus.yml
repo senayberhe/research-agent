@@ -1,0 +1,33 @@
+# Prometheus scrape configuration (mounted into the prometheus service in
+# docker-compose.yml). Targets are the compose service names.
+
+global:
+  scrape_interval: 15s
+
+  evaluation_interval: 15s
+
+
+# Alert rules (monitoring/alerts, mounted at /etc/prometheus/alerts).
+rule_files:
+  - "/etc/prometheus/alerts/*.yml"
+
+
+# Where firing alerts go (the alertmanager service).
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - "alertmanager:9093"
+
+
+scrape_configs:
+
+  # The only target: the api serves every metric (job, tool and agent
+  # activity, and the queue), computed from the database.
+  - job_name: "research-api"
+
+    static_configs:
+      - targets:
+          - "api:8000"
+
+    metrics_path: "/metrics"

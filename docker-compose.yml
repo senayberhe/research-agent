@@ -1,0 +1,187 @@
+services:
+
+  api:
+    build:
+      context: .
+
+    container_name: research-api
+
+    ports:
+      - "8000:8000"
+
+    # .env.docker, not .env: inside the container the database host is the
+    # "postgres" service, not localhost.
+    env_file:
+      - .env.docker
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    restart: unless-stopped
+
+    # curl is installed in the Dockerfile; -f makes it fail on error statuses.
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "curl -f http://localhost:8000/health || exit 1"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+
+  # Runs the research: claims pending jobs and runs the agent for them.
+  # Same image as the api, different command. Single worker: on startup it
+  # treats every job left RUNNING as interrupted, so don't scale it up yet.
+  worker:
+    build:
+      context: .
+
+    container_name: research-worker
+
+    command: ["sh", "-c", "exec uv run --no-sync python -m app.jobs.worker"]
+
+    env_file:
+      - .env.docker
+
+    # The api applies the database migrations on startup; wait for it.
+    depends_on:
+      api:
+        condition: service_healthy
+
+    restart: unless-stopped
+
+    # On docker stop the worker finishes its current job before exiting;
+    # give a research run time to end (after this it is killed, and the
+    # next start resumes the job from its checkpoint).
+    stop_grace_period: 5m
+
+
+  postgres:
+    image: postgres:18
+
+    container_name: research_agent_postgres
+
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: research_db
+
+    # Host port 5433: 5432 is taken by a separate local PostgreSQL install.
+    ports:
+      - "5433:5432"
+
+    # Postgres 18+ keeps its data under /var/lib/postgresql.
+    volumes:
+      - postgres18_data:/var/lib/postgresql
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U postgres -d research_db"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+    restart: unless-stopped
+
+
+
+  # Scrapes the api's /metrics (everything, from the database) every 15s,
+  # evaluates the alert rules in monitoring/alerts (sending firing ones to
+  # alertmanager), and stores the series (prometheus_data volume, 15 days by default). UI and
+  # queries at http://localhost:9090. Config: monitoring/prometheus.yml.
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    container_name: research-prometheus
+
+    # The image's defaults, plus the address links in alert emails use.
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.external-url=http://localhost:9090"
+
+    ports:
+      - "9090:9090"
+
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts:/etc/prometheus/alerts:ro
+      - prometheus_data:/prometheus
+
+    depends_on:
+      api:
+        condition: service_healthy
+      alertmanager:
+        condition: service_started
+
+    restart: unless-stopped
+
+
+  # Dashboards at http://localhost:3000 (admin / GRAFANA_ADMIN_PASSWORD,
+  # default "admin"). The Prometheus data source and the "Research Agent"
+  # dashboard are provisioned from monitoring/grafana; settings and users
+  # are kept in the grafana_data volume.
+  grafana:
+    image: grafana/grafana:13.2.3
+    container_name: research-grafana
+
+    ports:
+      - "3000:3000"
+
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # Open on the Research Agent dashboard.
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/research-agent.json
+
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+
+    depends_on:
+      - prometheus
+
+    restart: unless-stopped
+
+
+
+  # Receives alerts from Prometheus and emails them. UI at
+  # http://localhost:9093. Settings: monitoring/alertmanager/alertmanager.yml,
+  # with the SMTP host, addresses and login from .env.alertmanager and the
+  # password from monitoring/alertmanager/secrets/smtp_password (both ignored
+  # by git; see .env.alertmanager.example).
+  alertmanager:
+    image: prom/alertmanager:v0.34.1
+    container_name: research-alertmanager
+
+    entrypoint: ["/bin/sh", "/etc/alertmanager/entrypoint.sh"]
+
+    # The address links in alert emails use.
+    command: ["--web.external-url=http://localhost:9093"]
+
+    env_file:
+      - .env.alertmanager
+
+    ports:
+      - "9093:9093"
+
+    volumes:
+      - ./monitoring/alertmanager:/etc/alertmanager:ro
+      - alertmanager_data:/alertmanager
+
+    restart: unless-stopped
+
+
+volumes:
+  postgres18_data:
+  prometheus_data:
+  grafana_data:
+  alertmanager_data:

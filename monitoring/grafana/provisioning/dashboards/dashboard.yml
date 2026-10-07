@@ -1,0 +1,16 @@
+# Loads every dashboard JSON in /var/lib/grafana/dashboards (mounted from
+# monitoring/grafana/dashboards) into a "Research Agent" folder. Edit the
+# JSON files to change a dashboard; changes made in the UI aren't saved
+# back to them.
+
+apiVersion: 1
+
+providers:
+  - name: research-agent
+    folder: Research Agent
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards

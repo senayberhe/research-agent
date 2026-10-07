@@ -1,0 +1,250 @@
+# promtool unit tests for the alert rules: synthetic series in, expected
+# alerts out at given times (INACTIVE -> PENDING -> FIRING). Run:
+#
+#   docker run --rm --entrypoint promtool \
+#     -v "$PWD/monitoring/alerts:/alerts:ro" prom/prometheus:latest \
+#     test rules /alerts/tests/research-agent-alerts.test.yml
+
+rule_files:
+  - ../research-agent-alerts.yml
+
+evaluation_interval: 30s
+
+tests:
+
+  # 2 of 6 attempts a minute fail (33% > 20%): pending first, firing after
+  # the 5 minute "for".
+  - interval: 1m
+    input_series:
+      - series: 'research_job_attempts_total{outcome="completed"}'
+        values: '0+4x20'
+      - series: 'research_job_attempts_total{outcome="failed"}'
+        values: '0+2x20'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: HighResearchJobFailureRate
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: HighResearchJobFailureRate
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              service: research-agent
+            exp_annotations:
+              summary: "High research job failure rate"
+              description: "More than 20% of research jobs are failing over the last 5 minutes."
+
+  # 1 failure in 20 (5%): never fires.
+  - interval: 1m
+    input_series:
+      - series: 'research_job_attempts_total{outcome="completed"}'
+        values: '0+19x20'
+      - series: 'research_job_attempts_total{outcome="failed"}'
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: HighResearchJobFailureRate
+        exp_alerts: []
+
+  # Tavily calls all take ~20s (> 15s p95); arXiv is fast. Only Tavily
+  # fires.
+  - interval: 1m
+    input_series:
+      - series: 'research_tool_latency_seconds_bucket{tool="tavily",le="10.0"}'
+        values: '0x20'
+      - series: 'research_tool_latency_seconds_bucket{tool="tavily",le="20.0"}'
+        values: '0+5x20'
+      - series: 'research_tool_latency_seconds_bucket{tool="tavily",le="+Inf"}'
+        values: '0+5x20'
+      - series: 'research_tool_latency_seconds_bucket{tool="arxiv",le="10.0"}'
+        values: '0+5x20'
+      - series: 'research_tool_latency_seconds_bucket{tool="arxiv",le="20.0"}'
+        values: '0+5x20'
+      - series: 'research_tool_latency_seconds_bucket{tool="arxiv",le="+Inf"}'
+        values: '0+5x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: HighResearchToolLatency
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              service: research-agent
+              tool: tavily
+            exp_annotations:
+              summary: "High research tool latency"
+              description: "At least one research tool has a p95 latency above 15 seconds."
+
+  # Half of the tool calls fail.
+  - interval: 1m
+    input_series:
+      - series: 'research_tool_calls_total{tool="tavily",outcome="success"}'
+        values: '0+3x20'
+      - series: 'research_tool_calls_total{tool="tavily",outcome="failure"}'
+        values: '0+3x20'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: HighResearchToolFailureRate
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              service: research-agent
+            exp_annotations:
+              summary: "High research tool failure rate"
+              description: "More than 20% of research tool calls are failing."
+
+  # A pending job and nothing running: still within the 10 minute "for" at
+  # 5m (pending, not firing), firing at 12m. Once a job runs, it clears.
+  - interval: 1m
+    input_series:
+      - series: 'research_jobs{status="pending"}'
+        values: '1x14 0x10'
+      - series: 'research_jobs{status="running"}'
+        values: '0x14 1x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: ResearchWorkerNotProcessingJobs
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: ResearchWorkerNotProcessingJobs
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              service: research-agent
+              status: pending
+            exp_annotations:
+              summary: "Research worker may be stuck"
+              description: "Pending work exists but no worker job is currently active."
+      - eval_time: 20m
+        alertname: ResearchWorkerNotProcessingJobs
+        exp_alerts: []
+
+  # 12 unfinished runs (> 10); finished ones don't count.
+  - interval: 1m
+    input_series:
+      - series: 'research_agent_runs{status="running"}'
+        values: '8x15'
+      - series: 'research_agent_runs{status="waiting_for_tool"}'
+        values: '4x15'
+      - series: 'research_agent_runs{status="completed"}'
+        values: '500x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: TooManyActiveAgentRuns
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              service: research-agent
+            exp_annotations:
+              summary: "Too many active agent runs"
+              description: "More than 10 agent runs have been active for at least 5 minutes."
+
+  # $1.20 a minute = $0.02/s (> $0.01/s); 900k tokens a minute = 15k/s.
+  - interval: 1m
+    input_series:
+      - series: 'research_llm_cost_usd_total'
+        values: '0+1.2x40'
+      - series: 'research_llm_tokens_total{type="input"}'
+        values: '0+600000x40'
+      - series: 'research_llm_tokens_total{type="output"}'
+        values: '0+300000x40'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: HighLLMCostRate
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              service: research-agent
+            exp_annotations:
+              summary: "High LLM cost rate"
+              description: "Estimated LLM spending is increasing faster than $0.01 per second."
+      - eval_time: 30m
+        alertname: HighLLMTokenRate
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              service: research-agent
+            exp_annotations:
+              summary: "High LLM token consumption"
+              description: "LLM token consumption is above 10,000 tokens per second."
+
+  # The API stops answering scrapes: pending for the first 2 minutes,
+  # then critical.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="research-api",instance="api:8000"}'
+        values: '1x5 0x10'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: ResearchAPIDown
+        exp_alerts: []
+      - eval_time: 9m
+        alertname: ResearchAPIDown
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: research-agent
+              job: research-api
+              instance: api:8000
+            exp_annotations:
+              summary: "Research API is down"
+              description: "Prometheus cannot scrape the research API."
+
+  # No research-api target at all.
+  - interval: 1m
+    input_series: []
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: PrometheusTargetMissing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: research-agent
+              job: research-api
+            exp_annotations:
+              summary: "Research API Prometheus target disappeared"
+              description: "The research API target is no longer present in Prometheus."
+
+  # Job success budget burning at 20x for 10 minutes: critical after 5m.
+  # Tool success at 2x: fine.
+  - interval: 1m
+    input_series:
+      - series: 'research_slo_burn_rate{slo="research_job_success"}'
+        values: '20x15'
+      - series: 'research_slo_burn_rate{slo="tool_success"}'
+        values: '2x15'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: ErrorBudgetFastBurn
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: ErrorBudgetFastBurn
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: research-agent
+              slo: research_job_success
+            exp_annotations:
+              summary: "Error budget burning fast: research_job_success"
+              description: "The research_job_success error budget is being used 20.0x faster than the SLO allows."
+
+  # Job latency budget gone for 20 minutes.
+  - interval: 1m
+    input_series:
+      - series: 'research_slo_error_budget_remaining{slo="job_latency"}'
+        values: '0.3x5 0x20'
+      - series: 'research_slo_error_budget_remaining{slo="tool_latency"}'
+        values: '0.9x25'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: ErrorBudgetExhausted
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: ErrorBudgetExhausted
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              service: research-agent
+              slo: job_latency
+            exp_annotations:
+              summary: "Error budget exhausted: job_latency"
+              description: "The job_latency SLO has used its whole 30-day error budget: it's breached."

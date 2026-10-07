@@ -1,0 +1,22 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+.env
+.env.*
+!.env.example
+!.env.docker.example
+!.env.alertmanager.example
+
+# Alertmanager SMTP password (see .env.alertmanager.example)
+monitoring/alertmanager/secrets/*
+!monitoring/alertmanager/secrets/.gitkeep
+.venv/
+__pycache__/
+.pytest_cache/

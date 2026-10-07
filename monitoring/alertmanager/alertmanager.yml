@@ -1,0 +1,61 @@
+# Alertmanager: receives alerts from Prometheus (monitoring/alerts), groups
+# them and emails them. UI at http://localhost:9093.
+#
+# Credentials stay out of git:
+# - ${SMTP_...} / ${ALERT_EMAIL_TO} come from .env.alertmanager (ignored by
+#   git; copy .env.alertmanager.example). The alertmanager service fills
+#   them in when it starts (see docker-compose.yml).
+# - The SMTP password is read from monitoring/alertmanager/secrets/
+#   smtp_password (ignored by git), never written into this file.
+
+global:
+  smtp_smarthost: "${SMTP_SMARTHOST}"
+  smtp_from: "${SMTP_FROM}"
+  smtp_auth_username: "${SMTP_USERNAME}"
+  smtp_auth_password_file: /etc/alertmanager/secrets/smtp_password
+  smtp_require_tls: ${SMTP_REQUIRE_TLS}
+
+  # An alert that stops being sent is resolved after this long.
+  resolve_timeout: 5m
+
+
+route:
+  receiver: email
+
+  # One email per alert name, not one per series.
+  group_by: ["alertname", "service"]
+
+  # Wait this long for more alerts of a new group before the first email.
+  group_wait: 30s
+
+  # Wait this long before emailing about changes to a group.
+  group_interval: 5m
+
+  # Re-send a still-firing alert this often.
+  repeat_interval: 4h
+
+  routes:
+    # Critical alerts (the API is down): sooner, and repeated hourly.
+    - matchers:
+        - severity = "critical"
+      receiver: email
+      group_wait: 10s
+      repeat_interval: 1h
+
+
+receivers:
+  - name: email
+    email_configs:
+      - to: "${ALERT_EMAIL_TO}"
+        # Also email when the alert clears.
+        send_resolved: true
+
+
+inhibit_rules:
+  # While the API is down its metrics are missing, so the warnings built on
+  # them say nothing new: only the critical alert is sent.
+  - source_matchers:
+      - alertname = "ResearchAPIDown"
+    target_matchers:
+      - severity = "warning"
+    equal: ["service"]

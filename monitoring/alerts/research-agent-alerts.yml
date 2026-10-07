@@ -1,0 +1,213 @@
+# Prometheus alert rules (loaded via rule_files in monitoring/prometheus.yml;
+# mounted at /etc/prometheus/alerts in docker-compose.yml).
+#
+# Each rule: INACTIVE while expr returns nothing; PENDING once it returns a
+# result; FIRING if it keeps returning one for the "for" duration. Firing
+# alerts are visible at http://localhost:9090/alerts (no Alertmanager yet,
+# so nothing is sent).
+#
+# Metric names are the ones GET /metrics serves (app/core/prometheus.py).
+
+groups:
+  - name: research-agent-alerts
+    interval: 30s
+
+    rules:
+
+      # --------------------------------------------------
+      # Job failures
+      # --------------------------------------------------
+
+      - alert: HighResearchJobFailureRate
+        expr: |
+          (
+            sum(rate(research_job_attempts_total{outcome="failed"}[5m]))
+            /
+            sum(rate(research_job_attempts_total{outcome=~"completed|failed"}[5m]))
+          ) > 0.20
+        for: 5m
+        labels:
+          severity: warning
+          service: research-agent
+        annotations:
+          summary: "High research job failure rate"
+          description: "More than 20% of research jobs are failing over the last 5 minutes."
+
+      # --------------------------------------------------
+      # Job latency
+      # --------------------------------------------------
+
+      - alert: HighResearchJobLatency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(
+              rate(research_job_attempt_duration_seconds_bucket[5m])
+            ) by (le)
+          ) > 60
+        for: 5m
+        labels:
+          severity: warning
+          service: research-agent
+        annotations:
+          summary: "High research job latency"
+          description: "The p95 research job duration is above 60 seconds."
+
+      # --------------------------------------------------
+      # Tool failures
+      # --------------------------------------------------
+
+      - alert: HighResearchToolFailureRate
+        expr: |
+          (
+            sum(rate(research_tool_calls_total{outcome="failure"}[5m]))
+            /
+            sum(rate(research_tool_calls_total[5m]))
+          ) > 0.20
+        for: 5m
+        labels:
+          severity: warning
+          service: research-agent
+        annotations:
+          summary: "High research tool failure rate"
+          description: "More than 20% of research tool calls are failing."
+
+      # --------------------------------------------------
+      # Tool latency
+      # --------------------------------------------------
+
+      - alert: HighResearchToolLatency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(
+              rate(research_tool_latency_seconds_bucket[5m])
+            ) by (le, tool)
+          ) > 15
+        for: 5m
+        labels:
+          severity: warning
+          service: research-agent
+        annotations:
+          summary: "High research tool latency"
+          description: "At least one research tool has a p95 latency above 15 seconds."
+
+      # --------------------------------------------------
+      # Worker activity
+      # --------------------------------------------------
+
+      # on(): the two sides have different status labels, so match them
+      # on no labels at all.
+      - alert: ResearchWorkerNotProcessingJobs
+        expr: |
+          research_jobs{status="pending"} > 0
+          and on()
+          research_jobs{status="running"} == 0
+        for: 10m
+        labels:
+          severity: warning
+          service: research-agent
+        annotations:
+          summary: "Research worker may be stuck"
+          description: "Pending work exists but no worker job is currently active."
+
+      # --------------------------------------------------
+      # Agent activity
+      # --------------------------------------------------
+
+      - alert: TooManyActiveAgentRuns
+        expr: |
+          sum(
+            research_agent_runs{status=~"created|running|waiting_for_tool|processing_result"}
+          ) > 10
+        for: 5m
+        labels:
+          severity: warning
+          service: research-agent
+        annotations:
+          summary: "Too many active agent runs"
+          description: "More than 10 agent runs have been active for at least 5 minutes."
+
+      # --------------------------------------------------
+      # LLM cost
+      # --------------------------------------------------
+
+      - alert: HighLLMCostRate
+        expr: |
+          rate(research_llm_cost_usd_total[15m]) > 0.01
+        for: 10m
+        labels:
+          severity: warning
+          service: research-agent
+        annotations:
+          summary: "High LLM cost rate"
+          description: "Estimated LLM spending is increasing faster than $0.01 per second."
+
+      # --------------------------------------------------
+      # Token usage
+      # --------------------------------------------------
+
+      - alert: HighLLMTokenRate
+        expr: |
+          sum(rate(research_llm_tokens_total[5m])) > 10000
+        for: 10m
+        labels:
+          severity: warning
+          service: research-agent
+        annotations:
+          summary: "High LLM token consumption"
+          description: "LLM token consumption is above 10,000 tokens per second."
+
+      # --------------------------------------------------
+      # Prometheus target
+      # --------------------------------------------------
+
+      - alert: ResearchAPIDown
+        expr: up{job="research-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: research-agent
+        annotations:
+          summary: "Research API is down"
+          description: "Prometheus cannot scrape the research API."
+
+      # --------------------------------------------------
+      # Prometheus itself
+      # --------------------------------------------------
+
+      - alert: PrometheusTargetMissing
+        expr: absent(up{job="research-api"})
+        for: 5m
+        labels:
+          severity: critical
+          service: research-agent
+        annotations:
+          summary: "Research API Prometheus target disappeared"
+          description: "The research API target is no longer present in Prometheus."
+
+      # --------------------------------------------------
+      # Error budgets (app/services/error_budget_service.py)
+      # --------------------------------------------------
+
+      # At 14.4x, 2% of a 30-day budget goes in an hour: at this pace it's
+      # gone in about two days.
+      - alert: ErrorBudgetFastBurn
+        expr: research_slo_burn_rate > 14.4
+        for: 5m
+        labels:
+          severity: critical
+          service: research-agent
+        annotations:
+          summary: "Error budget burning fast: {{ $labels.slo }}"
+          description: "The {{ $labels.slo }} error budget is being used {{ $value | printf \"%.1f\" }}x faster than the SLO allows."
+
+      - alert: ErrorBudgetExhausted
+        expr: research_slo_error_budget_remaining <= 0
+        for: 15m
+        labels:
+          severity: warning
+          service: research-agent
+        annotations:
+          summary: "Error budget exhausted: {{ $labels.slo }}"
+          description: "The {{ $labels.slo }} SLO has used its whole 30-day error budget: it's breached."
