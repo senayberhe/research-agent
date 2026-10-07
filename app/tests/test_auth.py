@@ -1,24 +1,17 @@
-"""Authentication: passwords, tokens, login, the protected API, and the
-account CLI. Marked real_auth: no signed-in test user, real token checks."""
+"""Authentication: passwords, sessions, login, the protected API, and the
+account CLI. Marked real_auth: no signed-in test user, real session checks."""
 
 import asyncio
 import io
 from datetime import UTC, datetime, timedelta
 
-import jwt
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
+from app.api.dependencies import SESSION_COOKIE
 from app.core.config import settings
-from app.core.security import (
-    ALGORITHM,
-    InvalidToken,
-    create_access_token,
-    decode_access_token,
-    hash_password,
-    verify_password,
-)
-from app.db.models import User
+from app.core.security import hash_password, hash_session_token, verify_password
+from app.db.models import User, UserSession
 from app.main import app
 from app.services.user_service import UserError, create_user
 from app.tests.conftest import TestSessionLocal
@@ -30,9 +23,9 @@ pytestmark = pytest.mark.real_auth
 PASSWORD = "correct horse battery staple"
 
 
-async def add_user(username="alice", password=PASSWORD, active=True) -> User:
+async def add_user(username="alice", password=PASSWORD, active=True, role="viewer") -> User:
     async with TestSessionLocal() as db:
-        user = await create_user(db, username, password)
+        user = await create_user(db, username, password, role)
         if not active:
             user.is_active = False
             await db.commit()
@@ -43,12 +36,23 @@ def login(username="alice", password=PASSWORD):
     return client.post("/auth/login", json={"username": username, "password": password})
 
 
-def bearer(token: str) -> dict:
-    return {"Authorization": f"Bearer {token}"}
+def sign_in(username="alice", password=PASSWORD) -> str:
+    """Signs in and returns the session id, leaving the client's cookie jar
+    empty (requests then say which session they use: cookie())."""
+
+    response = login(username, password)
+    assert response.status_code == 200, response.text
+    token = response.cookies[SESSION_COOKIE]
+    client.cookies.clear()
+    return token
+
+
+def cookie(token: str) -> dict:
+    return {"Cookie": f"{SESSION_COOKIE}={token}"}
 
 
 # -------------------------
-# Passwords and tokens
+# Passwords and session ids
 # -------------------------
 
 
@@ -67,69 +71,6 @@ def test_password_hashing():
     assert verify_password(PASSWORD, None) is False
 
 
-def test_token_round_trip():
-
-    token, expires = create_access_token(42)
-
-    assert decode_access_token(token) == 42
-    assert expires > datetime.now(UTC) + timedelta(minutes=settings.auth_access_token_minutes - 1)
-
-
-def test_expired_token_is_rejected():
-
-    long_ago = datetime.now(UTC) - timedelta(days=2)
-    token, _ = create_access_token(42, now=long_ago)
-
-    with pytest.raises(InvalidToken):
-        decode_access_token(token)
-
-
-def test_tampered_token_is_rejected():
-
-    token, _ = create_access_token(42)
-    header, payload, signature = token.split(".")
-
-    # Someone edits the payload to be user 1: the signature no longer
-    # matches.
-    forged_payload = jwt.utils.base64url_encode(b'{"sub":"1","exp":9999999999}').decode()
-
-    with pytest.raises(InvalidToken):
-        decode_access_token(f"{header}.{forged_payload}.{signature}")
-
-
-def test_token_signed_with_another_key_is_rejected():
-
-    token = jwt.encode(
-        {"sub": "42", "exp": 9999999999},
-        "some-other-secret-key-that-is-long-enough",
-        algorithm=ALGORITHM,
-    )
-
-    with pytest.raises(InvalidToken):
-        decode_access_token(token)
-
-
-def test_unsigned_token_is_rejected():
-
-    # alg "none": no signature at all.
-    token = jwt.encode({"sub": "42", "exp": 9999999999}, None, algorithm="none")
-
-    with pytest.raises(InvalidToken):
-        decode_access_token(token)
-
-
-def test_token_without_expiry_is_rejected():
-
-    token = jwt.encode(
-        {"sub": "42"},
-        settings.auth_secret_key.get_secret_value(),
-        algorithm=ALGORITHM,
-    )
-
-    with pytest.raises(InvalidToken):
-        decode_access_token(token)
-
-
 # -------------------------
 # Login
 # -------------------------
@@ -146,15 +87,27 @@ async def test_login(clean_tables):
 
     body = response.json()
 
-    assert body["token_type"] == "bearer"
     assert body["user"]["username"] == "alice"
     assert body["expires_at"].endswith("Z")
-    assert decode_access_token(body["access_token"]) == body["user"]["id"]
+    # The session id is only in the cookie, never in the body.
+    assert "access_token" not in body
 
-    # The sign-in is recorded.
+    set_cookie = response.headers["set-cookie"]
+    assert set_cookie.startswith(f"{SESSION_COOKIE}=")
+    assert "HttpOnly" in set_cookie
+    assert "SameSite=lax" in set_cookie
+    assert f"Max-Age={settings.auth_session_hours * 3600}" in set_cookie
+
+    token = response.cookies[SESSION_COOKIE]
+
+    # The sign-in is recorded, and only the session id's hash is stored.
     async with TestSessionLocal() as db:
         user = await db.scalar(select(User).where(User.username == "alice"))
+        session = await db.scalar(select(UserSession))
     assert user.last_login_at is not None
+    assert session.user_id == user.id
+    assert session.token_hash == hash_session_token(token)
+    assert token not in session.token_hash
 
 
 @pytest.mark.asyncio
@@ -176,7 +129,7 @@ async def test_wrong_password_and_unknown_user_get_the_same_answer(clean_tables)
     for response in (wrong_password, unknown_user):
         assert response.status_code == 401
         assert response.json() == {"detail": "Incorrect username or password."}
-        assert response.headers["www-authenticate"] == "Bearer"
+        assert "set-cookie" not in response.headers
 
 
 @pytest.mark.asyncio
@@ -205,17 +158,18 @@ async def test_password_is_never_stored(clean_tables):
 
 
 # -------------------------
-# The current user
+# The current user and sessions
 # -------------------------
 
 
 @pytest.mark.asyncio
-async def test_me_with_a_valid_token(clean_tables):
+async def test_me_with_the_session_cookie(clean_tables):
 
     await add_user()
-    token = login().json()["access_token"]
+    login()
 
-    response = client.get("/auth/me", headers=bearer(token))
+    # The client sends back the cookie it was given, as a browser does.
+    response = client.get("/auth/me")
 
     assert response.status_code == 200
     assert response.json()["username"] == "alice"
@@ -227,29 +181,60 @@ async def test_me_with_a_valid_token(clean_tables):
     "headers",
     [
         {},
-        {"Authorization": "Bearer not-a-token"},
-        {"Authorization": "Basic YWxpY2U6cGFzc3dvcmQ="},
-        {"Authorization": "Bearer"},
+        {"Cookie": f"{SESSION_COOKIE}=not-a-session"},
+        {"Cookie": f"{SESSION_COOKIE}="},
+        {"Cookie": "some_other_cookie=abc"},
+        # The old way in: no longer accepted.
+        {"Authorization": "Bearer something"},
     ],
 )
-async def test_me_without_a_valid_token(clean_tables, headers):
+async def test_me_without_a_current_session(clean_tables, headers):
 
     response = client.get("/auth/me", headers=headers)
 
     assert response.status_code == 401
-    assert response.headers["www-authenticate"] == "Bearer"
 
 
 @pytest.mark.asyncio
-async def test_expired_token_is_refused(clean_tables):
+async def test_expired_session_is_refused(clean_tables):
 
-    user = await add_user()
-    token, _ = create_access_token(user.id, now=datetime.now(UTC) - timedelta(days=2))
+    await add_user()
+    token = sign_in()
 
-    response = client.get("/auth/me", headers=bearer(token))
+    async with TestSessionLocal() as db:
+        await db.execute(
+            update(UserSession).values(expires_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(minutes=1))
+        )
+        await db.commit()
+
+    response = client.get("/auth/me", headers=cookie(token))
 
     assert response.status_code == 401
-    assert "expired" in response.json()["detail"]
+    assert "ended" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_logout_ends_the_session(clean_tables):
+
+    await add_user()
+    token = sign_in()
+    other = sign_in()
+
+    response = client.post("/auth/logout", headers=cookie(token))
+
+    assert response.status_code == 204
+    # The browser is told to drop the cookie.
+    assert f'{SESSION_COOKIE}=""' in response.headers["set-cookie"]
+    assert "Max-Age=0" in response.headers["set-cookie"]
+
+    # A copy of the cookie stops working too; other sessions don't.
+    assert client.get("/auth/me", headers=cookie(token)).status_code == 401
+    assert client.get("/auth/me", headers=cookie(other)).status_code == 200
+
+
+def test_logout_when_not_signed_in():
+
+    assert client.post("/auth/logout").status_code == 204
 
 
 @pytest.mark.asyncio
@@ -258,23 +243,182 @@ async def test_deactivating_a_user_ends_their_sessions(clean_tables):
     from app.services.user_service import set_active
 
     await add_user()
-    token = login().json()["access_token"]
+    token = sign_in()
 
-    assert client.get("/auth/me", headers=bearer(token)).status_code == 200
+    assert client.get("/auth/me", headers=cookie(token)).status_code == 200
 
     async with TestSessionLocal() as db:
         await set_active(db, "alice", False)
 
-    # The same, still-unexpired token no longer works.
-    assert client.get("/auth/me", headers=bearer(token)).status_code == 401
+    # Reactivated: the old session stays ended.
+    async with TestSessionLocal() as db:
+        await set_active(db, "alice", True)
+
+    assert client.get("/auth/me", headers=cookie(token)).status_code == 401
 
 
 @pytest.mark.asyncio
-async def test_token_for_a_deleted_user_is_refused(clean_tables):
+async def test_a_new_password_ends_existing_sessions(clean_tables):
 
-    token, _ = create_access_token(999_999)
+    from app.services.user_service import set_password
 
-    assert client.get("/auth/me", headers=bearer(token)).status_code == 401
+    await add_user()
+    token = sign_in()
+
+    async with TestSessionLocal() as db:
+        await set_password(db, "alice", "a brand new password")
+
+    assert client.get("/auth/me", headers=cookie(token)).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_long_expired_sessions_are_cleared_at_sign_in(clean_tables):
+
+    await add_user()
+    sign_in()
+
+    async with TestSessionLocal() as db:
+        await db.execute(
+            update(UserSession).values(expires_at=datetime.now(UTC).replace(tzinfo=None) - timedelta(days=2))
+        )
+        await db.commit()
+
+    sign_in()
+
+    async with TestSessionLocal() as db:
+        sessions = (await db.scalars(select(UserSession))).all()
+
+    assert len(sessions) == 1
+
+
+# -------------------------
+# Sign-in throttling
+# -------------------------
+
+
+@pytest.mark.asyncio
+async def test_repeated_failed_sign_ins_are_throttled(clean_tables, monkeypatch):
+
+    monkeypatch.setattr(settings, "auth_login_max_failures", 3)
+
+    await add_user()
+
+    for _ in range(3):
+        assert login(password="not the password").status_code == 401
+
+    # Locked out: even the right password waits (and isn't checked).
+    response = login()
+
+    assert response.status_code == 429
+    assert int(response.headers["retry-after"]) > 0
+
+    # Other usernames aren't affected.
+    await add_user("bob")
+    assert login("bob").status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_a_successful_sign_in_resets_the_count(clean_tables, monkeypatch):
+
+    monkeypatch.setattr(settings, "auth_login_max_failures", 3)
+
+    await add_user()
+
+    for _ in range(2):
+        login(password="not the password")
+    assert login().status_code == 200
+
+    for _ in range(2):
+        login(password="not the password")
+    assert login().status_code == 200
+
+
+def test_throttle_window_passes():
+
+    from app.services.login_throttle import LoginThrottle
+
+    now = [1000.0]
+    throttle = LoginThrottle(clock=lambda: now[0])
+
+    for _ in range(settings.auth_login_max_failures):
+        throttle.failed("alice", "1.2.3.4")
+
+    assert throttle.retry_after("alice", "1.2.3.4") is not None
+
+    now[0] += settings.auth_login_window_seconds + 1
+
+    assert throttle.retry_after("alice", "1.2.3.4") is None
+    # Nothing kept once the window has passed.
+    assert throttle.failures == {}
+
+
+def test_throttle_limits_one_address_across_usernames(monkeypatch):
+
+    from app.services.login_throttle import LoginThrottle
+
+    monkeypatch.setattr(settings, "auth_login_max_failures_per_ip", 4)
+    throttle = LoginThrottle()
+
+    for name in ("a", "b", "c", "d"):
+        throttle.failed(name, "1.2.3.4")
+
+    assert throttle.retry_after("e", "1.2.3.4") is not None
+    assert throttle.retry_after("e", "5.6.7.8") is None
+
+
+# -------------------------
+# Cross-site requests (CSRF)
+# -------------------------
+
+
+@pytest.mark.asyncio
+async def test_changes_from_another_origin_are_refused(clean_tables):
+
+    await add_user(role="researcher")
+    token = sign_in()
+
+    response = client.post(
+        "/research",
+        json={"question": "What is RAG?"},
+        headers={**cookie(token), "Origin": "https://evil.example"},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Cross-origin request refused."}
+
+    # The frontend's own origin is fine.
+    response = client.post(
+        "/research",
+        json={"question": "What is RAG?"},
+        headers={**cookie(token), "Origin": "http://localhost:5173"},
+    )
+
+    assert response.status_code == 202
+
+
+def test_sign_in_from_another_origin_is_refused():
+
+    response = client.post(
+        "/auth/login",
+        json={"username": "alice", "password": PASSWORD},
+        headers={"Origin": "https://evil.example"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_cors_allows_credentials_for_the_frontend():
+
+    response = client.options(
+        "/research",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "PATCH",
+        },
+    )
+
+    assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
+    assert response.headers["access-control-allow-credentials"] == "true"
 
 
 # -------------------------
@@ -288,6 +432,7 @@ PUBLIC = {
     ("GET", "/health"),  # container health checks
     ("GET", "/metrics"),  # Prometheus scraping
     ("POST", "/auth/login"),
+    ("POST", "/auth/logout"),  # ends a session if there is one
 }
 
 
@@ -300,7 +445,7 @@ def every_route():
             yield method.upper(), path
 
 
-def test_every_endpoint_but_the_public_ones_needs_a_token():
+def test_every_endpoint_but_the_public_ones_needs_a_session():
     """Walks every route the app has, so a new endpoint added without
     protection fails here."""
 
@@ -324,7 +469,7 @@ def test_every_endpoint_but_the_public_ones_needs_a_token():
     assert "GET /jobs" in checked
 
 
-def test_public_endpoints_work_without_a_token():
+def test_public_endpoints_work_without_a_session():
 
     assert client.get("/health").status_code == 200
     assert client.get("/metrics").status_code == 200
@@ -332,15 +477,17 @@ def test_public_endpoints_work_without_a_token():
 
 
 @pytest.mark.asyncio
-async def test_protected_endpoints_work_with_a_token(clean_tables):
+async def test_protected_endpoints_work_with_a_session(clean_tables):
 
-    await add_user()
-    token = login().json()["access_token"]
+    # An operator may also start research and see analytics (other roles:
+    # test_rbac.py).
+    await add_user(role="operator")
+    login()
 
     for path in ("/research", "/jobs", "/research/slo", "/research/metrics"):
-        assert client.get(path, headers=bearer(token)).status_code == 200, path
+        assert client.get(path).status_code == 200, path
 
-    created = client.post("/research", json={"question": "What is RAG?"}, headers=bearer(token))
+    created = client.post("/research", json={"question": "What is RAG?"})
 
     assert created.status_code == 202
 
@@ -352,6 +499,7 @@ def test_401_responses_carry_cors_headers():
 
     assert response.status_code == 401
     assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
+    assert response.headers["access-control-allow-credentials"] == "true"
 
 
 # -------------------------

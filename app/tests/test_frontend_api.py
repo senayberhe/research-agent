@@ -113,6 +113,7 @@ async def test_list_tasks_newest_first(clean_tables):
         "status",
         "summary",
         "created_at",
+        "created_by",
     }
 
 
@@ -218,3 +219,21 @@ def test_utc_type_keeps_aware_times_and_converts_others():
     assert _to_utc_iso(datetime(2026, 10, 7, 14, 0, tzinfo=plus_two)) == (
         "2026-10-07T12:00:00Z"
     )
+
+
+def test_cors_allows_patch_for_user_management():
+    """The Users page changes roles with PATCH: the browser's preflight
+    must allow it (a missing method fails only in a real browser)."""
+
+    response = client.options(
+        "/users/1",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "PATCH",
+            "Access-Control-Request-Headers": "authorization, content-type",
+        },
+    )
+
+    assert response.status_code == 200
+    assert "PATCH" in response.headers["access-control-allow-methods"]
+

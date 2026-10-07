@@ -3,7 +3,7 @@ import logging
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import ResearchTask, TaskStatus
+from app.db.models import ResearchTask, TaskStatus, User
 from app.jobs.service import create_research_job
 
 
@@ -13,11 +13,13 @@ logger = logging.getLogger(__name__)
 async def create_research_task(
     db: AsyncSession,
     question: str,
+    created_by: User | None = None,
 ) -> ResearchTask:
 
     task = ResearchTask(
         question=question,
         status=TaskStatus.PENDING,
+        created_by=created_by,
     )
 
     db.add(task)

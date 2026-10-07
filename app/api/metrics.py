@@ -9,7 +9,8 @@ from fastapi import (
 from prometheus_client import CONTENT_TYPE_LATEST
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_current_user
+from app.api.dependencies import require
+from app.core.permissions import Permission
 from app.core.prometheus import render_prometheus_metrics
 from app.db.database import get_db
 from app.db.models import utc_now
@@ -35,9 +36,9 @@ router = APIRouter(
 @router.get(
     "/research/metrics/system",
     response_model=SystemMetricsResponse,
-    # JSON metrics need a signed-in user; /metrics (Prometheus) is public
+    # Analytics: operators and admins. /metrics (Prometheus) stays public
     # so it can be scraped.
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(require(Permission.ANALYTICS_VIEW))],
 )
 async def get_system_metrics(
     hours: float = Query(default=24, gt=0),

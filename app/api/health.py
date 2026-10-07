@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_current_user
+from app.api.dependencies import require
+from app.core.permissions import Permission
 from app.db.database import get_db
 from app.jobs.service import get_queue_health
 
@@ -17,8 +18,9 @@ STUCK_PENDING_SECONDS = 600
 # GET /health (system health) is in app/main.py.
 
 
-# /health is public (container health checks); queue details are not.
-@router.get("/health/jobs", dependencies=[Depends(get_current_user)])
+# /health is public (container health checks); queue details are
+# analytics (operators and admins).
+@router.get("/health/jobs", dependencies=[Depends(require(Permission.ANALYTICS_VIEW))])
 async def jobs_health(
     db: AsyncSession = Depends(get_db),
 ):

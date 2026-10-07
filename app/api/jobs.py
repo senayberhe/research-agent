@@ -9,7 +9,8 @@ from fastapi import (
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_current_user
+from app.api.dependencies import get_current_user, require
+from app.core.permissions import Permission
 from app.db.database import get_db
 from app.db.models import utc_now
 from app.jobs.models import JobStatus
@@ -245,6 +246,8 @@ async def get_timeline(
 
 @router.get(
     "/workers",
+    # Analytics: operators and admins.
+    dependencies=[Depends(require(Permission.ANALYTICS_VIEW))],
     response_model=list[WorkerResponse],
 )
 async def list_workers(

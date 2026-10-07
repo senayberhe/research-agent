@@ -1,11 +1,12 @@
-// Reads GET /events (server-sent events) with fetch, so the request can
-// carry "Authorization: Bearer" (EventSource can't send headers). Does
-// what EventSource does: parses the stream, reconnects when it drops
+// Reads GET /events (server-sent events) with fetch, sending the session
+// cookie, rather than EventSource, which can't tell a 401 (signed out:
+// stop) from a dropped connection (retry forever). Does what EventSource
+// does: parses the stream, reconnects when it drops
 // (after the server's "retry:" delay), and sends the last event id it
 // received (Last-Event-ID) so the server resumes after it.
 
 import { API_URL } from "./api";
-import { clearSession, getToken } from "./session";
+import { clearSession, getSession } from "./session";
 
 export type StreamStatus = "connecting" | "live" | "reconnecting";
 
@@ -32,15 +33,13 @@ export async function streamEvents({ path, onMessage, onStatus, signal }: Option
   onStatus("connecting");
 
   while (!signal.aborted) {
-    const token = getToken();
-
-    if (!token) return;
+    if (!getSession()) return;
 
     try {
       const response = await fetch(`${API_URL}${path}`, {
+        credentials: "include",
         headers: {
           Accept: "text/event-stream",
-          Authorization: `Bearer ${token}`,
           ...(lastEventId !== null ? { "Last-Event-ID": lastEventId } : {}),
         },
         signal,

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 
 import { api } from "../api";
+import { useAuth, useCan } from "../authModel";
 import { Card } from "../components/Card";
 import { StatusMark } from "../components/status";
 import { TASK_STATUS } from "../components/taskStatus";
@@ -10,6 +11,8 @@ import { usePolling } from "../usePolling";
 export function ResearchList() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
+  const canStart = useCan("research:create");
   const questionBox = useRef<HTMLTextAreaElement>(null);
 
   // "New research" (each click, even from this page): put the cursor in
@@ -47,6 +50,14 @@ export function ResearchList() {
         <h1>Research</h1>
       </div>
 
+      {!canStart && (
+        <div className="card read-only-note" role="note">
+          Your role ({user?.role ?? "viewer"}) can view research but not start it. Ask an
+          admin for the researcher role.
+        </div>
+      )}
+
+      {canStart && (
       <form className="card ask" onSubmit={submit}>
         <label htmlFor="question" className="card-title">
           Ask a research question
@@ -77,6 +88,7 @@ export function ResearchList() {
           </button>
         </div>
       </form>
+      )}
 
       <Card
         title="Recent research"
@@ -98,6 +110,7 @@ export function ResearchList() {
                   <Link to={`/research/${task.id}`} className="label task-link">
                     {task.question}
                   </Link>
+                  {task.created_by && <span className="detail">by {task.created_by}</span>}
                   <span className="detail">
                     {new Date(task.created_at).toLocaleString(undefined, {
                       month: "short",

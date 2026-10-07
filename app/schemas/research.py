@@ -15,6 +15,11 @@ class ResearchResponse(BaseModel):
     status: str
     summary: str | None = None
     created_at: UTCDateTime
+    # The username of whoever started it (None for older tasks).
+    created_by: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("created_by_username", "created_by"),
+    )
 
     model_config = {
         "from_attributes": True

@@ -379,3 +379,75 @@ async def test_list_jobs_by_status_and_pages(clean_tables, jobs):
 
     assert client.get("/jobs?status=unknown").status_code == 422
     assert client.get("/jobs?limit=0").status_code == 422
+
+
+# -------------------------
+# The stream doesn't hold a session open
+# -------------------------
+
+
+@pytest.mark.real_auth
+@pytest.mark.asyncio
+async def test_stream_sign_in_check_closes_its_session(clean_tables, monkeypatch):
+    """Regression: the sign-in check used the request's session, which
+    FastAPI keeps open for the whole streaming response: each open tab held
+    a pooled connection idle in a transaction (minutes), with a lock on
+    users that blocked migrations. Now the check's own session is closed
+    before streaming starts."""
+
+    from contextlib import asynccontextmanager
+
+    from app.api.dependencies import get_session_factory as dependency
+    from app.services import event_stream_service
+    from app.services.user_service import create_user
+
+    open_sessions = 0
+    open_when_streaming = []
+
+    @asynccontextmanager
+    async def tracking_session():
+        nonlocal open_sessions
+        open_sessions += 1
+        try:
+            async with TestSessionLocal() as session:
+                yield session
+        finally:
+            open_sessions -= 1
+
+    async def tracking_get_db():
+        async with tracking_session() as session:
+            yield session
+
+    from app.db.database import get_db
+
+    previous_get_db = app.dependency_overrides.get(get_db)
+    app.dependency_overrides[dependency] = lambda: tracking_session
+    # Request sessions count too: the old bug was one of these left open.
+    app.dependency_overrides[get_db] = tracking_get_db
+
+    real_latest = event_stream_service.latest_event_id
+
+    async def latest_event_id(db):
+        # The stream's first query: only its own session should be open.
+        open_when_streaming.append(open_sessions)
+        return await real_latest(db)
+
+    monkeypatch.setattr(event_stream_service, "latest_event_id", latest_event_id)
+
+    async with TestSessionLocal() as db:
+        await create_user(db, "streamer", "correct horse battery staple")
+
+    # Signs in: the client keeps the session cookie, as a browser does.
+    client.post(
+        "/auth/login",
+        json={"username": "streamer", "password": "correct horse battery staple"},
+    )
+
+    try:
+        response = client.get("/events")
+    finally:
+        app.dependency_overrides[get_db] = previous_get_db
+
+    assert response.status_code == 200
+    assert open_when_streaming == [1]
+    assert open_sessions == 0

@@ -1,6 +1,7 @@
 import logging
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +17,7 @@ from app.api.health import router as health_router
 from app.api.jobs import router as jobs_router
 from app.api.metrics import router as metrics_router
 from app.api.research import router as research_router
+from app.api.users import router as users_router
 
 
 logger = logging.getLogger(__name__)
@@ -38,6 +40,7 @@ async def create_initial_admin() -> None:
                     db,
                     settings.auth_admin_username,
                     settings.auth_admin_password.get_secret_value(),
+                    role="admin",
                 )
                 logger.info("Created the initial admin user %r", user.username)
     except UserError as error:
@@ -75,11 +78,41 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
-# Lets the frontend (CORS_ORIGINS) call the API from the browser.
+SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+@app.middleware("http")
+async def check_origin(request: Request, call_next):
+    """CSRF protection, with the cookie's SameSite=Lax: a request that
+    changes something must not come from a page on another origin. Browsers
+    always send Origin on such requests; tools like curl send none, and
+    can't carry a signed-in browser's cookie anyway."""
+
+    origin = request.headers.get("origin")
+
+    if (
+        request.method not in SAFE_METHODS
+        and origin is not None
+        and origin not in settings.cors_origins
+        and origin != f"{request.url.scheme}://{request.url.netloc}"
+    ):
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Cross-origin request refused."},
+        )
+
+    return await call_next(request)
+
+
+# Lets the frontend (CORS_ORIGINS) call the API from the browser, sending
+# the session cookie (allow_credentials). Added last, so it's outermost:
+# even refusals carry the headers the frontend needs to read them.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
-    allow_methods=["GET", "POST"],
+    allow_credentials=True,
+    # PATCH: the Users page changes roles and active state.
+    allow_methods=["GET", "POST", "PATCH"],
     allow_headers=["*"],
 )
 
@@ -89,6 +122,7 @@ app.include_router(research_router)
 app.include_router(jobs_router)
 app.include_router(metrics_router)
 app.include_router(events_router)
+app.include_router(users_router)
 
 
 @app.get("/")

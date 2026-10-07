@@ -171,6 +171,22 @@ class ResearchTask(Base):
             nullable=False
         )
 
+    # Who started it (None for tasks from before accounts existed, or whose
+    # user was removed).
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    # Loaded with the task (one join), so created_by_username can be read
+    # without a lazy load (not allowed with async sessions).
+    created_by: Mapped["User | None"] = relationship(lazy="joined")
+
+    @property
+    def created_by_username(self) -> str | None:
+        return self.created_by.username if self.created_by is not None else None
+
 
 
     steps: Mapped[list["ResearchStep"]] = relationship(
@@ -302,9 +318,21 @@ class ResearchResult(Base):
     )
 
 
+class UserRole(str, Enum):
+    """What a user may do (app/core/permissions.py): viewers read research
+    and jobs; researchers also start and resume research; operators also
+    see analytics (system metrics, SLOs, workers); admins also manage
+    users."""
+
+    VIEWER = "viewer"
+    RESEARCHER = "researcher"
+    OPERATOR = "operator"
+    ADMIN = "admin"
+
+
 class User(Base):
     """Someone who can sign in. Created by an admin (python -m app.cli
-    create-user), never by sign-up."""
+    create-user, or the Users page), never by sign-up."""
 
     __tablename__ = "users"
 
@@ -327,7 +355,15 @@ class User(Base):
         nullable=False,
     )
 
-    # A deactivated user can't sign in, and their tokens stop working.
+    # New accounts get the least access; an admin grants more.
+    role: Mapped[UserRole] = mapped_column(
+        String(20),
+        default=UserRole.VIEWER,
+        server_default=UserRole.VIEWER.value,
+        nullable=False,
+    )
+
+    # A deactivated user can't sign in, and their sessions end.
     is_active: Mapped[bool] = mapped_column(
         default=True,
         server_default="true",
@@ -344,6 +380,51 @@ class User(Base):
         DateTime,
         nullable=True,
     )
+
+
+class UserSession(Base):
+    """One sign-in: the browser holds a random session id in an httpOnly
+    cookie; only its SHA-256 is stored here, so a copy of the table can't
+    be used to sign in. Ends when it expires, or when revoked (sign out,
+    deactivation, a new password)."""
+
+    __tablename__ = "user_sessions"
+
+    id: Mapped[int] = mapped_column(
+        primary_key=True,
+        autoincrement=True,
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # SHA-256 of the cookie's value, hex.
+    token_hash: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        unique=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=utc_now,
+        nullable=False,
+    )
+
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+    )
+
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
+
+    user: Mapped[User] = relationship(lazy="joined")
 
 
 class JobEvent(Base):

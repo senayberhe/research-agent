@@ -56,12 +56,19 @@ then `uv run alembic upgrade head`.
 
 ## Accounts and sign-in
 
-Everything except `GET /health`, `GET /metrics` (Prometheus) and
-`POST /auth/login` needs a signed-in user: send
-`Authorization: Bearer <token>`, from `POST /auth/login`
-(`{"username": ..., "password": ...}`). Tokens are JWTs signed with
-`AUTH_SECRET_KEY` (required, 32+ characters; changing it signs everyone out)
-and last `AUTH_ACCESS_TOKEN_MINUTES` (default 480).
+Everything except `GET /health`, `GET /metrics` (Prometheus),
+`POST /auth/login` and `POST /auth/logout` needs a signed-in user.
+`POST /auth/login` (`{"username": ..., "password": ...}`) sets an httpOnly
+session cookie (SameSite=Lax) that the browser sends with every request;
+`POST /auth/logout` ends it. Sessions are stored in `user_sessions` (only a
+hash of the cookie's value) and last `AUTH_SESSION_HOURS` (default 8). Set
+`AUTH_COOKIE_SECURE=true` wherever the app is served over HTTPS.
+
+Requests that change something are refused (403) if they come from a page on
+an origin other than the API's own or one in `CORS_ORIGINS`. Repeated failed
+sign-ins get 429 for a while (`AUTH_LOGIN_MAX_FAILURES`, per username;
+`AUTH_LOGIN_MAX_FAILURES_PER_IP`; within `AUTH_LOGIN_WINDOW_SECONDS`).
+A new password or deactivation signs the user out everywhere.
 
 There's no sign-up: an admin creates accounts.
 

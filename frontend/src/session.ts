@@ -1,20 +1,30 @@
-// The signed-in session: the access token and when it expires, kept in
-// localStorage so a reload stays signed in. Read by api.ts for every
-// request; an expired token is never sent.
-//
-// (localStorage is readable by any script on the page, so the app relies
-// on not running untrusted script: React escapes rendered text, and the
-// research summary's Markdown is rendered without raw HTML.)
+// Who is signed in, and until when. The sign-in itself is the session
+// cookie the API sets (httpOnly: no script on the page can read it, and
+// the browser sends it with every request). This copy, in localStorage, is
+// only so a reload shows the right user straight away and other tabs hear
+// about sign-in and sign-out; it holds nothing that grants access.
 
 const KEY = "research-agent.session";
+
+export type Role = "viewer" | "researcher" | "operator" | "admin";
+
+// What a role may do (app/core/permissions.py on the server, which is what
+// actually enforces it; the UI only hides what isn't allowed).
+export type Permission =
+  | "view"
+  | "research:create"
+  | "research:resume"
+  | "analytics:view"
+  | "users:manage";
 
 export interface SessionUser {
   id: number;
   username: string;
+  role: Role;
+  permissions: Permission[];
 }
 
 export interface Session {
-  token: string;
   expiresAt: string;
   user: SessionUser;
 }
@@ -41,10 +51,6 @@ export function getSession(): Session | null {
   }
 
   return session;
-}
-
-export function getToken(): string | null {
-  return getSession()?.token ?? null;
 }
 
 export function setSession(session: Session) {

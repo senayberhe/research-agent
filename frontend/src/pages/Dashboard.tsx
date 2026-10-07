@@ -56,7 +56,7 @@ export function Dashboard() {
   return (
     <>
       <div className="page-header">
-        <h1>Research Overview</h1>
+        <h1>Analytics</h1>
         <RangeFilter value={range} onChange={setRange} />
       </div>
 

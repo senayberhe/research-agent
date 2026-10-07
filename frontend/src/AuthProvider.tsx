@@ -24,7 +24,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     api
       .me(controller.signal)
-      .then((me) => setUser({ id: me.id, username: me.username }))
+      .then((me) => {
+        // The role may have changed since sign-in: keep the stored copy
+        // current too.
+        const session = getSession();
+        if (session) setSession({ ...session, user: me });
+        setUser(me);
+      })
       .catch((error: Error) => {
         if (error.name === "AbortError") return;
         // 401 already cleared it; anything else (API down): keep the
@@ -48,7 +54,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSession(session);
   }, []);
 
-  const signOut = useCallback(() => clearSession(), []);
+  const signOut = useCallback(() => {
+    // Signed out here straight away; the server ends the session (and
+    // clears the cookie) in the background. If that request fails, the
+    // session still expires on its own.
+    clearSession();
+    api.logout().catch(() => {});
+  }, []);
 
   const value = useMemo(() => ({ user, signIn, signOut }), [user, signIn, signOut]);
 

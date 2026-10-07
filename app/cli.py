@@ -1,9 +1,11 @@
 """Account administration (no sign-up: admins create accounts).
 
-    python -m app.cli create-user alice          # prompts for the password
+    python -m app.cli create-user alice          # prompts for the password; role viewer
+    python -m app.cli create-user bob --role researcher
+    python -m app.cli set-role alice admin       # viewer, researcher or admin
     python -m app.cli list-users
     python -m app.cli set-password alice
-    python -m app.cli deactivate alice           # can't sign in; tokens stop working
+    python -m app.cli deactivate alice           # can't sign in; signed out everywhere
     python -m app.cli activate alice
 
 In Docker: docker compose exec api uv run python -m app.cli create-user alice
@@ -21,6 +23,7 @@ from app.services.user_service import (
     list_users,
     set_active,
     set_password,
+    set_role,
 )
 
 
@@ -44,8 +47,12 @@ async def _run(args: argparse.Namespace) -> None:
     async with AsyncSessionLocal() as db:
 
         if args.command == "create-user":
-            user = await create_user(db, args.username, _read_password())
-            print(f"Created user {user.username!r} (id {user.id}).")
+            user = await create_user(db, args.username, _read_password(), args.role)
+            print(f"Created user {user.username!r} (id {user.id}, {user.role}).")
+
+        elif args.command == "set-role":
+            user = await set_role(db, args.username, args.role)
+            print(f"{user.username!r} is now {user.role}.")
 
         elif args.command == "set-password":
             user = await set_password(db, args.username, _read_password())
@@ -59,14 +66,22 @@ async def _run(args: argparse.Namespace) -> None:
             for user in await list_users(db):
                 state = "active" if user.is_active else "deactivated"
                 last = user.last_login_at.isoformat() + "Z" if user.last_login_at else "never"
-                print(f"{user.id:>4}  {user.username:<30} {state:<12} last sign-in: {last}")
+                print(f"{user.id:>4}  {user.username:<30} {user.role:<11} {state:<12} last sign-in: {last}")
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     commands = parser.add_subparsers(dest="command", required=True)
 
-    for name in ("create-user", "set-password", "activate", "deactivate"):
+    create = commands.add_parser("create-user")
+    create.add_argument("username")
+    create.add_argument("--role", default="viewer", help="viewer (default), researcher or admin")
+
+    role = commands.add_parser("set-role")
+    role.add_argument("username")
+    role.add_argument("role", help="viewer, researcher or admin")
+
+    for name in ("set-password", "activate", "deactivate"):
         commands.add_parser(name).add_argument("username")
     commands.add_parser("list-users")
 

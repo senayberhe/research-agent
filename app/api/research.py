@@ -4,11 +4,13 @@ from fastapi import (
     HTTPException,
     Query,
 )
+from sqlalchemy import inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.dependencies import get_current_user
+from app.api.dependencies import get_current_user, require
+from app.core.permissions import Permission
 from app.db.database import get_db
-from app.db.models import TaskStatus, utc_now
+from app.db.models import TaskStatus, User, utc_now
 from app.jobs.event_service import (
     get_job_events,
     parse_event_metadata,
@@ -78,11 +80,16 @@ router = APIRouter(
 async def create_task(
     request: ResearchRequest,
     db: AsyncSession = Depends(get_db),
+    # Researchers and admins (403 for viewers).
+    user: User = Depends(require(Permission.RESEARCH_CREATE)),
 ):
 
     task = await create_research_task(
         db=db,
         question=request.question,
+        # The signed-in user, as this request loaded it from the database
+        # (a stand-in user that isn't stored, as in tests, isn't linked).
+        created_by=user if inspect(user).persistent else None,
     )
 
     return task
@@ -121,6 +128,8 @@ async def list_tasks(
 @router.get(
     "/metrics",
     response_model=SystemMetricsSummary,
+    # Analytics: operators and admins.
+    dependencies=[Depends(require(Permission.ANALYTICS_VIEW))],
 )
 async def get_system_metrics(
     db: AsyncSession = Depends(get_db),
@@ -139,6 +148,7 @@ async def get_system_metrics(
 @router.get(
     "/metrics/timeseries",
     response_model=JobTimeseriesResponse,
+    dependencies=[Depends(require(Permission.ANALYTICS_VIEW))],
 )
 async def get_job_timeseries(
     range: str = Query(default="24h", pattern="^(" + "|".join(RANGES) + ")$"),
@@ -154,6 +164,7 @@ async def get_job_timeseries(
 @router.get(
     "/slo",
     response_model=SLOReportResponse,
+    dependencies=[Depends(require(Permission.ANALYTICS_VIEW))],
 )
 async def get_slo_report(
     db: AsyncSession = Depends(get_db),
@@ -167,6 +178,7 @@ async def get_slo_report(
 @router.get(
     "/slo/error-budget",
     response_model=ErrorBudgetReportResponse,
+    dependencies=[Depends(require(Permission.ANALYTICS_VIEW))],
 )
 async def get_error_budget_report(
     db: AsyncSession = Depends(get_db),
@@ -207,6 +219,8 @@ async def get_task(
 async def resume_research(
     task_id: int,
     db: AsyncSession = Depends(get_db),
+    # Researchers and admins (403 for viewers).
+    user: User = Depends(require(Permission.RESEARCH_RESUME)),
 ):
     """Queues a failed task to continue: a worker claims its job and resumes
     the task's run in place, from its last checkpoint."""

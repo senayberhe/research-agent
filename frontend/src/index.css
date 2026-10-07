@@ -1413,3 +1413,167 @@ button {
     display: none;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Roles and users                                                     */
+/* ------------------------------------------------------------------ */
+
+.role-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: capitalize;
+  color: var(--text-secondary);
+}
+
+.role-admin {
+  border-color: var(--series-1);
+  color: var(--series-1);
+}
+
+.role-researcher {
+  border-color: var(--good);
+}
+
+.read-only-note {
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+
+.users-section {
+  margin-top: 16px;
+}
+
+.role-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.add-user {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.add-user label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.add-user input,
+.add-user select,
+.users-table select {
+  font: inherit;
+  font-weight: normal;
+  color: var(--text-primary);
+  background: var(--page);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 10px;
+}
+
+.add-user-error {
+  grid-column: 1 / -1;
+}
+
+.users-table .row-inactive td {
+  color: var(--text-muted);
+}
+
+.tag-neutral {
+  border-color: var(--border);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.link-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+@media (max-width: 960px) {
+  .add-user {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Access, SLO page                                                    */
+/* ------------------------------------------------------------------ */
+
+.access-denied {
+  border-left: 4px solid var(--warning);
+  color: var(--text-primary);
+}
+
+.role-operator {
+  border-color: var(--warning);
+}
+
+.slo-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 16px;
+}
+
+@media (max-width: 1100px) {
+  .slo-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .slo-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.slo-card .tile-value {
+  margin: 10px 0 12px;
+}
+
+.slo-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.budget-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.budget-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--grid);
+  overflow: hidden;
+}
+
+.budget-fill {
+  height: 100%;
+  border-radius: 3px;
+}

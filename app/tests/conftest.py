@@ -135,9 +135,9 @@ def no_agent_retry_backoff(monkeypatch):
 @pytest.fixture(autouse=True)
 def signed_in(request):
     """API tests run as a signed-in user, unless marked real_auth (those
-    exercise the real token checks: app/tests/test_auth.py)."""
+    exercise the real session checks: app/tests/test_auth.py)."""
 
-    from app.api.dependencies import get_current_user
+    from app.api.dependencies import get_current_user, get_streaming_user
     from app.db.models import User
     from app.main import app
 
@@ -145,9 +145,28 @@ def signed_in(request):
         yield
         return
 
-    user = User(id=1, username="test-user", is_active=True)
+    user = User(id=1, username="test-user", is_active=True, role="admin")
     app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_streaming_user] = lambda: user
 
     yield
 
     app.dependency_overrides.pop(get_current_user, None)
+    app.dependency_overrides.pop(get_streaming_user, None)
+
+
+@pytest.fixture(autouse=True)
+def fresh_sign_in_state():
+    """Each test starts signed out (the shared TestClient keeps cookies)
+    and with no failed sign-ins counted."""
+
+    from app.services.login_throttle import throttle
+    from app.tests.test_research_api import client
+
+    client.cookies.clear()
+    throttle.reset()
+
+    yield
+
+    client.cookies.clear()
+    throttle.reset()

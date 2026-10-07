@@ -2,7 +2,13 @@
 // VITE_API_URL (default: the API on localhost:8000, allowed by its
 // CORS_ORIGINS).
 
-import { clearSession, getToken, type Session } from "./session";
+import {
+  clearSession,
+  getSession,
+  type Role,
+  type Session,
+  type SessionUser,
+} from "./session";
 
 export const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
@@ -61,9 +67,36 @@ export interface JobTimeseries {
   buckets: TimeseriesBucket[];
 }
 
+export type SLOStatus = "healthy" | "breached" | "no_data" | "unknown";
+
+export interface SLOErrorBudget {
+  slo_target: number;
+  actual: number | null;
+  budget_remaining: number | null;
+  budget_remaining_percent: number | null;
+  exhausted: boolean;
+}
+
+export interface SLOEntry {
+  target: number;
+  actual: number | null;
+  target_seconds?: number | null;
+  actual_ms?: number | null;
+  percentiles?: { p50_ms: number | null; p95_ms: number | null; p99_ms: number | null } | null;
+  by_tool?: Record<string, { p50_ms: number | null; p95_ms: number | null; p99_ms: number | null; status: SLOStatus }> | null;
+  status: SLOStatus;
+  error_budget: SLOErrorBudget | null;
+}
+
 export interface SLOReport {
   window_days: number;
-  job_latency: { target_seconds: number; status: string };
+  window_start: string;
+  window_end: string;
+  api_availability: SLOEntry;
+  research_job_success: SLOEntry;
+  tool_success: SLOEntry;
+  job_latency: SLOEntry & { target_seconds: number };
+  tool_latency: SLOEntry;
 }
 
 export type TaskStatus =
@@ -81,6 +114,8 @@ export interface ResearchTask {
   status: TaskStatus;
   summary: string | null;
   created_at: string;
+  // Who started it (null for tasks from before accounts).
+  created_by: string | null;
 }
 
 export interface ResearchList {
@@ -152,6 +187,22 @@ export interface TaskProgress {
   tool_calls: ToolCall[];
   events: TimelineEvent[];
 }
+
+export interface AdminUser {
+  id: number;
+  username: string;
+  role: Role;
+  is_active: boolean;
+  created_at: string;
+  last_login_at: string | null;
+}
+
+const pickUser = (user: SessionUser): SessionUser => ({
+  id: user.id,
+  username: user.username,
+  role: user.role,
+  permissions: user.permissions,
+});
 
 export type JobStatus = "pending" | "running" | "completed" | "failed";
 
@@ -231,17 +282,16 @@ async function request<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
-  const token = getToken();
+  const signedIn = getSession() !== null;
 
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
-    headers: {
-      ...(init?.headers ?? {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
+    // Sends the session cookie (the API is on another origin in
+    // development).
+    credentials: "include",
   });
 
-  if (response.status === 401 && token) {
+  if (response.status === 401 && signedIn) {
     clearSession();
     throw new SessionExpired("Your session has ended. Sign in again.");
   }
@@ -257,6 +307,8 @@ async function request<T>(
     }
     throw new Error(detail);
   }
+
+  if (response.status === 204) return undefined as T;
 
   return (await response.json()) as T;
 }
@@ -286,21 +338,35 @@ export const api = {
   slo: (signal?: AbortSignal) => get<SLOReport>("/research/slo", signal),
 
   login: async (username: string, password: string): Promise<Session> => {
+    // The session id comes back as a cookie, not in the body.
     const body = await post<{
-      access_token: string;
       expires_at: string;
-      user: { id: number; username: string };
+      user: SessionUser;
     }>("/auth/login", { username, password });
 
     return {
-      token: body.access_token,
       expiresAt: body.expires_at,
-      user: { id: body.user.id, username: body.user.username },
+      user: pickUser(body.user),
     };
   },
 
-  me: (signal?: AbortSignal) =>
-    get<{ id: number; username: string }>("/auth/me", signal),
+  // Ends the session on the server (and clears the cookie).
+  logout: () => post<void>("/auth/logout"),
+
+  me: async (signal?: AbortSignal) => pickUser(await get<SessionUser>("/auth/me", signal)),
+
+  // Users (admins).
+  listUsers: (signal?: AbortSignal) => get<AdminUser[]>("/users", signal),
+
+  createUser: (username: string, password: string, role: Role) =>
+    post<AdminUser>("/users", { username, password, role }),
+
+  updateUser: (id: number, changes: Partial<{ role: Role; is_active: boolean; password: string }>) =>
+    request<AdminUser>(`/users/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(changes),
+    }),
 
   listResearch: (signal?: AbortSignal) =>
     get<ResearchList>("/research?limit=20", signal),

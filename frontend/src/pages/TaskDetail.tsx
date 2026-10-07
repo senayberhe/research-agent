@@ -4,6 +4,7 @@ import { Link, useParams } from "react-router-dom";
 import remarkGfm from "remark-gfm";
 
 import { api, type TaskProgress, type TimelineEvent } from "../api";
+import { useCan } from "../authModel";
 import { Card, StatTile } from "../components/Card";
 import { StatusMark } from "../components/status";
 import { ToolCalls } from "../components/ToolCalls";
@@ -122,6 +123,7 @@ function LiveTiles({ progress }: { progress: TaskProgress }) {
 
 export function TaskDetail() {
   const taskId = Number(useParams().taskId);
+  const canResume = useCan("research:resume");
   const [resuming, setResuming] = useState(false);
   const [resumeError, setResumeError] = useState<string | null>(null);
   // Bumped after a resume, to start polling again.
@@ -192,6 +194,7 @@ export function TaskDetail() {
           <span className="task-status">
             <StatusMark tone={status.tone} label={status.label} />
           </span>
+          {data.task.created_by && <span className="updated">by {data.task.created_by}</span>}
           {data.finished ? (
             <span className="updated">Finished</span>
           ) : (
@@ -211,7 +214,7 @@ export function TaskDetail() {
       {failure && (
         <div className="error-banner" role="alert">
           <strong>The research failed:</strong> {failure}
-          {data.can_resume && (
+          {data.can_resume && canResume && (
             <div className="resume-row">
               <button type="button" className="primary-button" onClick={resume} disabled={resuming}>
                 {resuming ? "Resuming…" : "Resume from last checkpoint"}

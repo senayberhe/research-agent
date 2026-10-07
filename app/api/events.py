@@ -2,25 +2,19 @@ from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.api.dependencies import get_current_user
+# Re-exported: tests override it from here.
+from app.api.dependencies import get_session_factory, get_streaming_user
 from app.core.config import settings
-from app.db.database import AsyncSessionLocal
 from app.services.event_stream_service import stream_job_events
 
 
-# The stream needs a signed-in user too (the frontend sends the token in
-# the Authorization header; EventSource can't, so it uses fetch).
+# The stream needs a signed-in user too: the frontend's fetch sends the
+# session cookie (frontend/src/eventStream.ts). Checked with a short database
+# session of its own (get_streaming_user), not the request's.
 router = APIRouter(
     tags=["Events"],
-    dependencies=[Depends(get_current_user)],
+    dependencies=[Depends(get_streaming_user)],
 )
-
-
-def get_session_factory() -> async_sessionmaker[AsyncSession]:
-    """The stream opens a short session per poll (rather than holding one
-    request session open for minutes). Tests override this."""
-
-    return AsyncSessionLocal
 
 
 def _event_id(value: str | int | None) -> int | None:

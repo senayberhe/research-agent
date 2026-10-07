@@ -62,13 +62,17 @@ class Settings(BaseSettings):
     # Default: the Vite dev server.
     cors_origins: list[str] = ["http://localhost:5173"]
 
-    # Authentication. AUTH_SECRET_KEY signs the access tokens (JWT, HS256):
-    # required, at least 32 characters, and secret (anyone who has it can
-    # mint tokens). Generate one with:
-    #   python -c "import secrets; print(secrets.token_urlsafe(48))"
-    auth_secret_key: SecretStr = Field(min_length=32)
-    # How long a login lasts.
-    auth_access_token_minutes: int = Field(default=480, ge=1)
+    # Authentication: a session cookie (httpOnly, SameSite=Lax), backed by
+    # the user_sessions table. How long a sign-in lasts:
+    auth_session_hours: int = Field(default=8, ge=1)
+    # Send the cookie over HTTPS only. Turn on wherever the app is served
+    # over HTTPS; off for http://localhost development.
+    auth_cookie_secure: bool = False
+    # Failed sign-ins allowed per username, and per client address, within
+    # the window before further attempts get 429.
+    auth_login_max_failures: int = Field(default=5, ge=1)
+    auth_login_max_failures_per_ip: int = Field(default=20, ge=1)
+    auth_login_window_seconds: int = Field(default=300, ge=1)
     # Optional: created as the first user on startup if there are no users
     # yet (otherwise ignored). Or use: python -m app.cli create-user
     auth_admin_username: str | None = None
